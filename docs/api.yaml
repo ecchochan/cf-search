@@ -1,0 +1,493 @@
+openapi: 3.0.3
+info:
+  title: Cloudflare Search-as-a-Service API
+  description: |
+    A distributed, globally-scalable full-text search service built on Cloudflare Workers 
+    with Durable Objects, SQLite FTS5, and intelligent geographic routing.
+
+    ## Authentication
+
+    ### Admin Operations (Production)
+    Admin operations like `/configure` require Bearer token authentication in production:
+    ```
+    Authorization: Bearer <your-admin-token>
+    ```
+
+    ### Search Operations (Optional)
+    Search operations can optionally require an API key:
+    ```
+    X-API-Key: <your-api-key>
+    ```
+
+    ### Development Environment
+    Authentication is disabled in development environment for easier testing.
+
+    ## Rate Limiting
+    All endpoints are subject to rate limiting based on client IP address.
+
+    ## Caching
+    Search results are automatically cached using Cloudflare KV with intelligent TTL 
+    based on query complexity. Cache is automatically invalidated when documents are updated.
+
+    ## Error Handling
+    All endpoints return structured JSON error responses with appropriate HTTP status codes.
+  version: 1.0.0
+  contact:
+    name: API Support
+    url: https://github.com/your-repo/cf-search
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: https://your-worker.your-subdomain.workers.dev
+    description: Production server
+  - url: https://staging-worker.your-subdomain.workers.dev
+    description: Staging server
+
+security:
+  - BearerAuth: []
+  - ApiKeyAuth: []
+  - {}
+
+paths:
+  /search:
+    get:
+      summary: Search documents
+      description: |
+        Perform full-text search across indexed documents. Results are automatically 
+        routed to the geographically nearest replica for optimal performance.
+      operationId: searchDocuments
+      security:
+        - ApiKeyAuth: []
+        - {}
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Search query text (minimum 2 characters, maximum 100 characters)
+          schema:
+            type: string
+            minLength: 2
+            maxLength: 100
+          example: "artificial intelligence machine learning"
+        - name: includeCold
+          in: query
+          required: false
+          description: Whether to include results from cold storage (archived documents)
+          schema:
+            type: boolean
+            default: false
+          example: false
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SearchResult"
+              examples:
+                success:
+                  summary: Successful search with results
+                  value:
+                    - id: "doc-1"
+                      content: "Artificial intelligence and machine learning are transforming..."
+                      rank: 0.95
+                    - id: "doc-2"
+                      content: "Machine learning algorithms can help automate..."
+                      rank: 0.87
+                empty:
+                  summary: No results found
+                  value: []
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                missing_query:
+                  summary: Missing query parameter
+                  value:
+                    success: false
+                    error: "Bad request: missing query parameter"
+                query_too_short:
+                  summary: Query too short
+                  value:
+                    error: "Query too short"
+                    details: "Minimum query length is 2 characters"
+                query_too_common:
+                  summary: Query too generic
+                  value:
+                    error: "Query too broad"
+                    details: "Query contains too many common terms"
+                    suggestion: "Please use more specific search terms"
+        "401":
+          description: Unauthorized (when API key is required)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /index:
+    post:
+      summary: Index documents
+      description: |
+        Add new documents to the search index. Documents are queued for processing 
+        and will be available for search within seconds. Supports both single documents 
+        and batch indexing.
+      operationId: indexDocuments
+      security:
+        - ApiKeyAuth: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/Document"
+                - type: array
+                  items:
+                    $ref: "#/components/schemas/Document"
+            examples:
+              single_document:
+                summary: Index a single document
+                value:
+                  id: "doc-123"
+                  content: "This is the content of the document to be indexed."
+              multiple_documents:
+                summary: Index multiple documents
+                value:
+                  - id: "doc-1"
+                    content: "First document content"
+                  - id: "doc-2"
+                    content: "Second document content"
+      responses:
+        "202":
+          description: Documents queued for indexing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexResponse"
+              example:
+                success: true
+                message: "2 documents queued for indexing."
+        "400":
+          description: Bad request - invalid document format
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Error"
+                  - type: object
+                    properties:
+                      validationErrors:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/ValidationError"
+              example:
+                success: false
+                error: "Invalid document format"
+                validationErrors:
+                  - field: "documents[0].id"
+                    message: "ID must be a non-empty string (max 255 chars) or non-negative integer"
+                    value: ""
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /configure:
+    post:
+      summary: Configure system settings
+      description: |
+        Configure search system settings including replication, storage thresholds, 
+        and operational parameters. This is an administrative endpoint that requires 
+        authentication in production.
+      operationId: configureSystem
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfigureRequest"
+            examples:
+              basic_config:
+                summary: Basic configuration
+                value:
+                  alarmIntervalMs: 300000
+                  purgeThresholdDocs: 1000000
+                  purgeTargetDocs: 800000
+              replica_config:
+                summary: Configure replicas
+                value:
+                  replicas:
+                    - type: "region"
+                      name: "europe"
+                    - type: "region"
+                      name: "asia"
+      responses:
+        "200":
+          description: Configuration updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+        "400":
+          description: Invalid configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized - invalid or missing admin token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                missing_token:
+                  summary: Missing authorization header
+                  value:
+                    success: false
+                    error: "Authentication failed"
+                    details: "Missing Authorization header. Use: Authorization: Bearer <token>"
+                invalid_token:
+                  summary: Invalid admin token
+                  value:
+                    success: false
+                    error: "Authentication failed"
+                    details: "Invalid admin token"
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Admin token for administrative operations
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key for authenticated access (optional)
+
+  schemas:
+    Document:
+      type: object
+      required:
+        - id
+        - content
+      properties:
+        id:
+          oneOf:
+            - type: string
+              minLength: 1
+              maxLength: 255
+              description: Unique document identifier (string)
+            - type: integer
+              minimum: 0
+              description: Unique document identifier (non-negative integer)
+          example: "doc-123"
+        content:
+          type: string
+          minLength: 1
+          description: The text content to be indexed and searched
+          example: "This is the document content that will be searchable."
+      additionalProperties: true
+      example:
+        id: "doc-123"
+        content: "Machine learning is a subset of artificial intelligence..."
+
+    SearchResult:
+      type: object
+      required:
+        - id
+        - content
+        - rank
+      properties:
+        id:
+          type: string
+          description: Document identifier
+          example: "doc-123"
+        content:
+          type: string
+          description: Document content
+          example: "This is the content of the document..."
+        rank:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: Relevance score (0.0 to 1.0, higher is more relevant)
+          example: 0.95
+
+    ConfigureRequest:
+      type: object
+      properties:
+        alarmIntervalMs:
+          type: integer
+          minimum: 60000
+          description: Interval between alarm calls in milliseconds (minimum 1 minute)
+          example: 300000
+        purgeThresholdDocs:
+          type: integer
+          minimum: 1000
+          description: Maximum number of documents before purging to cold storage
+          example: 1000000
+        purgeTargetDocs:
+          type: integer
+          minimum: 100
+          description: Target number of documents after purging (should be less than threshold)
+          example: 800000
+        coldStoragePrefix:
+          type: string
+          description: Prefix for cold storage DO names
+          example: "cold-"
+        coldStorageThresholdDocs:
+          type: integer
+          minimum: 1000
+          description: Maximum documents per cold storage DO before creating new one
+          example: 500000
+        replicas:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReplicaInfo"
+          description: List of replica configurations
+        isReadOnly:
+          type: boolean
+          description: Whether this DO is read-only (used for cold storage)
+          example: false
+        currentColdStorageIndex:
+          type: integer
+          minimum: 0
+          description: Current cold storage index (for rolling cold storage)
+          example: 0
+        idType:
+          type: string
+          enum: ["string", "integer"]
+          description: Type of document IDs - affects FTS5 optimization
+          example: "string"
+
+    ReplicaInfo:
+      type: object
+      required:
+        - type
+      properties:
+        type:
+          type: string
+          enum: ["region", "local"]
+          description: Type of replica
+          example: "region"
+        name:
+          type: string
+          description: Name identifier for the replica
+          example: "europe"
+        id:
+          type: string
+          description: Optional ID for the replica
+          example: "replica-eu-1"
+
+    ApiResponse:
+      type: object
+      required:
+        - success
+      properties:
+        success:
+          type: boolean
+          description: Whether the operation was successful
+          example: true
+        message:
+          type: string
+          description: Success message
+          example: "Operation completed successfully"
+        error:
+          type: string
+          description: Error message (only present when success is false)
+          example: "An error occurred"
+
+    IndexResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiResponse"
+      example:
+        success: true
+        message: "5 documents queued for indexing."
+
+    ValidationError:
+      type: object
+      required:
+        - field
+        - message
+      properties:
+        field:
+          type: string
+          description: The field that failed validation
+          example: "documents[0].id"
+        message:
+          type: string
+          description: Description of the validation error
+          example: "ID must be a non-empty string"
+        value:
+          description: The invalid value that was provided
+          example: ""
+
+    Error:
+      type: object
+      required:
+        - success
+        - error
+      properties:
+        success:
+          type: boolean
+          enum: [false]
+          description: Always false for error responses
+          example: false
+        error:
+          type: string
+          description: Error message
+          example: "Bad request: missing query parameter"
+        details:
+          type: string
+          description: Additional error details
+          example: "The 'q' parameter is required for search operations"
+        suggestion:
+          type: string
+          description: Suggested action to resolve the error
+          example: "Please include more specific search terms"
+
+tags:
+  - name: Search
+    description: Search operations
+  - name: Indexing
+    description: Document indexing operations
+  - name: Administration
+    description: System configuration and management
+
+externalDocs:
+  description: Find more info about the search service
+  url: https://github.com/your-repo/cf-search/blob/main/README.md

@@ -1,0 +1,17 @@
+{
+  "extends": "../tsconfig.node.json",
+  "compilerOptions": {
+    "rootDir": "../",
+    "moduleResolution": "bundler",
+    "types": [
+      "@cloudflare/workers-types",
+      "@cloudflare/vitest-pool-workers" // provides `cloudflare:test` types
+    ]
+  },
+  "include": [
+    "../worker-configuration.d.ts", // output of `wrangler types`
+    "./env.d.ts",
+    "./**/*.ts",
+    "./*.ts"
+  ]
+}

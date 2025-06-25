@@ -1,0 +1,95 @@
+# This is the configuration file for your Cloudflare Worker.
+# It defines the services, bindings, and settings needed for the application to run.
+
+name = "cf-search"
+main = "src/index.ts"
+compatibility_date = "2025-06-17"
+
+# ====================================================================================
+# Durable Object Bindings
+# We define three separate bindings that will all point to the same DO class.
+# This allows us to create different "types" of DOs with distinct purposes.
+# ====================================================================================
+
+[[durable_objects.bindings]]
+# The main, global singleton DO where all writes are consolidated.
+# We will programmatically ensure this is a singleton located in a primary region (e.g., "wnam" - Western North America).
+name = "PRIMARY_INDEX_DO"
+class_name = "SearchIndexDO"
+
+[[durable_objects.bindings]]
+# Read-replicas that are placed in specific geographic regions (e.g., Europe, Asia).
+# The main DO will sync its data to these.
+name = "REGION_REPLICA_DO"
+class_name = "SearchIndexDO"
+
+[[durable_objects.bindings]]
+# Optional: In-region read-replicas for even higher read throughput within a single region.
+# A regional replica can spawn these to handle very high local traffic.
+name = "LOCAL_REPLICA_DO"
+class_name = "SearchIndexDO"
+
+[[durable_objects.bindings]]
+# Cold storage DOs for archiving old documents while maintaining searchability.
+# These are global singletons that store purged data and can still be searched.
+name = "COLD_STORAGE_DO"
+class_name = "SearchIndexDO"
+
+# KV namespace for search result caching
+[[kv_namespaces]]
+binding = "SEARCH_CACHE"
+id = "search_cache_kv"
+preview_id = "search_cache_kv_preview"
+
+# ====================================================================================
+# Cloudflare Queue Binding
+# Used for ingesting documents asynchronously. This makes the write process
+# resilient to temporary outages or high traffic spikes.
+# ====================================================================================
+
+[[queues.producers]]
+queue = "doc-ingestion-queue"
+binding = "INDEX_QUEUE"
+
+[[queues.consumers]]
+queue = "doc-ingestion-queue"
+# We can configure batch size, timeout, etc. here
+# max_batch_size = 100
+# max_batch_timeout = 30
+
+# ====================================================================================
+# SQLite Database Migrations for the Durable Object
+# This ensures the database schema is correctly set up when the DO is first created.
+# ====================================================================================
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SearchIndexDO"]
+
+# ====================================================================================
+# Environment Variables
+# These can be used to configure the service for different environments
+# ====================================================================================
+
+[vars]
+# Default environment (development)
+ENVIRONMENT = "development"
+# Security is disabled in development for easier testing
+
+# Production environment configuration
+[env.production]
+vars = { ENVIRONMENT = "production" }
+# Security variables for production (set via secrets or environment)
+# ADMIN_TOKEN = "your-secure-admin-token"    # Set via: wrangler secret put ADMIN_TOKEN
+# API_KEY = "your-api-key"                   # Optional, set via: wrangler secret put API_KEY
+
+# Staging environment configuration
+[env.staging]
+vars = { ENVIRONMENT = "staging" }
+# Security variables for staging
+# ADMIN_TOKEN = "your-staging-admin-token"   # Set via: wrangler secret put ADMIN_TOKEN --env staging
+# API_KEY = "your-staging-api-key"           # Optional
+
+# To deploy with a specific environment:
+# wrangler deploy --env production
+# wrangler deploy --env staging
+

@@ -1,0 +1,347 @@
+# Cloudflare Search Service - Datadog Monitoring Configuration
+# This file defines log processing, metrics, dashboards, and alerts
+
+# Log Processing Pipeline
+log_processing:
+  service: cf-search
+  source: cloudflare
+
+  # Grok parsing for structured logs
+  grok_parser:
+    rule: |
+      cf_search_log %{DATA:timestamp} %{WORD:level} %{DATA:message} %{DATA:json_data}
+
+  # JSON parsing for structured data
+  json_parser:
+    extract_attributes:
+      - "@timestamp"
+      - "level"
+      - "message"
+      - "service"
+      - "version"
+      - "environment"
+      - "doId"
+      - "doType"
+      - "region"
+      - "metrics_type"
+      - "operation"
+      - "status"
+      - "duration_ms"
+      - "document_count"
+      - "result_count"
+      - "query_length"
+      - "batch_size"
+      - "error_type"
+      - "error_message"
+      - "database_size_bytes"
+      - "storage_utilization_percent"
+      - "purge_triggered"
+      - "cold_storage_count"
+
+# Custom Metrics Definition
+metrics:
+  # Performance Metrics
+  - name: cf_search.search.latency
+    type: histogram
+    source: duration_ms
+    tags:
+      - operation:search
+      - status
+      - environment
+      - doType
+
+  - name: cf_search.index.latency
+    type: histogram
+    source: duration_ms
+    tags:
+      - operation:index
+      - status
+      - environment
+      - doType
+
+  - name: cf_search.operations.count
+    type: count
+    source: operation
+    tags:
+      - operation
+      - status
+      - environment
+      - doType
+
+  # Error Metrics
+  - name: cf_search.errors.count
+    type: count
+    source: error_type
+    tags:
+      - error_type
+      - operation
+      - environment
+      - doType
+
+  # Storage Metrics
+  - name: cf_search.storage.size_bytes
+    type: gauge
+    source: database_size_bytes
+    tags:
+      - environment
+      - doType
+      - doId
+
+  - name: cf_search.storage.utilization_percent
+    type: gauge
+    source: storage_utilization_percent
+    tags:
+      - environment
+      - doType
+
+  - name: cf_search.storage.document_count
+    type: gauge
+    source: document_count
+    tags:
+      - environment
+      - doType
+
+  # Business Metrics
+  - name: cf_search.search.results_count
+    type: histogram
+    source: result_count
+    tags:
+      - environment
+      - doType
+
+  - name: cf_search.search.query_length
+    type: histogram
+    source: query_length
+    tags:
+      - environment
+
+# Dashboard Configuration
+dashboards:
+  cf_search_overview:
+    title: "Cloudflare Search Service - Overview"
+    widgets:
+      # Performance Section
+      - title: "Search Latency (P50, P95, P99)"
+        type: timeseries
+        metrics:
+          - metric: cf_search.search.latency
+            aggregation: p50
+          - metric: cf_search.search.latency
+            aggregation: p95
+          - metric: cf_search.search.latency
+            aggregation: p99
+
+      - title: "Index Latency (P50, P95, P99)"
+        type: timeseries
+        metrics:
+          - metric: cf_search.index.latency
+            aggregation: p50
+          - metric: cf_search.index.latency
+            aggregation: p95
+          - metric: cf_search.index.latency
+            aggregation: p99
+
+      - title: "Operations per Second"
+        type: timeseries
+        metrics:
+          - metric: cf_search.operations.count
+            aggregation: rate
+            group_by: ["operation", "status"]
+
+      # Error Section
+      - title: "Error Rate by Operation"
+        type: timeseries
+        metrics:
+          - metric: cf_search.errors.count
+            aggregation: rate
+            group_by: ["operation", "error_type"]
+
+      - title: "Success Rate"
+        type: query_value
+        formula: |
+          (cf_search.operations.count{status:success}.rate / 
+           cf_search.operations.count.rate) * 100
+
+      # Storage Section
+      - title: "Storage Utilization"
+        type: timeseries
+        metrics:
+          - metric: cf_search.storage.utilization_percent
+            group_by: ["doType"]
+
+      - title: "Document Count by DO Type"
+        type: timeseries
+        metrics:
+          - metric: cf_search.storage.document_count
+            group_by: ["doType"]
+
+      - title: "Database Size Growth"
+        type: timeseries
+        metrics:
+          - metric: cf_search.storage.size_bytes
+            group_by: ["doType"]
+
+      # Business Metrics Section
+      - title: "Search Results Distribution"
+        type: histogram
+        metrics:
+          - metric: cf_search.search.results_count
+
+      - title: "Query Length Distribution"
+        type: histogram
+        metrics:
+          - metric: cf_search.search.query_length
+
+      - title: "Top Error Types"
+        type: toplist
+        metrics:
+          - metric: cf_search.errors.count
+            group_by: ["error_type"]
+
+      # Infrastructure Section
+      - title: "Active Durable Objects"
+        type: query_value
+        metric: cf_search.storage.document_count
+        aggregation: count_distinct
+        group_by: ["doId"]
+
+# Alert Configuration
+alerts:
+  # Performance Alerts
+  - name: "High Search Latency"
+    metric: cf_search.search.latency
+    aggregation: p95
+    threshold: 1000 # 1 second
+    comparison: ">"
+    timeframe: "5m"
+    severity: warning
+    message: |
+      Search latency P95 is above 1 second.
+      This may indicate performance degradation.
+
+  - name: "Very High Search Latency"
+    metric: cf_search.search.latency
+    aggregation: p99
+    threshold: 5000 # 5 seconds
+    comparison: ">"
+    timeframe: "5m"
+    severity: critical
+    message: |
+      Search latency P99 is above 5 seconds.
+      Immediate investigation required.
+
+  # Error Rate Alerts
+  - name: "High Error Rate"
+    formula: |
+      (cf_search.errors.count.rate / cf_search.operations.count.rate) * 100
+    threshold: 5 # 5% error rate
+    comparison: ">"
+    timeframe: "10m"
+    severity: warning
+    message: |
+      Error rate is above 5% over the last 10 minutes.
+      Check application logs for issues.
+
+  - name: "Critical Error Rate"
+    formula: |
+      (cf_search.errors.count.rate / cf_search.operations.count.rate) * 100
+    threshold: 15 # 15% error rate
+    comparison: ">"
+    timeframe: "5m"
+    severity: critical
+    message: |
+      Error rate is above 15% over the last 5 minutes.
+      Service may be degraded - immediate action required.
+
+  # Storage Alerts
+  - name: "Storage Utilization High"
+    metric: cf_search.storage.utilization_percent
+    threshold: 80 # 80% of 10GB limit
+    comparison: ">"
+    timeframe: "5m"
+    severity: warning
+    message: |
+      Storage utilization is above 80%.
+      Purging should be triggered soon.
+
+  - name: "Storage Utilization Critical"
+    metric: cf_search.storage.utilization_percent
+    threshold: 95 # 95% of 10GB limit
+    comparison: ">"
+    timeframe: "1m"
+    severity: critical
+    message: |
+      Storage utilization is above 95%.
+      Risk of hitting Cloudflare DO storage limits.
+
+  # Business Alerts
+  - name: "No Search Results"
+    formula: |
+      cf_search.search.results_count.avg
+    threshold: 0.1 # Very low average results
+    comparison: "<"
+    timeframe: "15m"
+    severity: warning
+    message: |
+      Average search results is very low.
+      May indicate data issues or poor search quality.
+
+  - name: "Service Unavailable"
+    metric: cf_search.operations.count
+    threshold: 1
+    comparison: "<"
+    timeframe: "5m"
+    severity: critical
+    message: |
+      No operations detected in the last 5 minutes.
+      Service may be completely down.
+
+# Log-based Alerts
+log_alerts:
+  - name: "Database Schema Errors"
+    query: "service:cf-search level:error message:*schema*"
+    threshold: 1
+    timeframe: "5m"
+    severity: critical
+    message: |
+      Database schema errors detected.
+      This may indicate corruption or migration issues.
+
+  - name: "SQL Injection Attempts"
+    query: "service:cf-search error_type:ValidationError message:*injection*"
+    threshold: 5
+    timeframe: "10m"
+    severity: warning
+    message: |
+      Multiple validation errors that may indicate SQL injection attempts.
+
+  - name: "Storage Limit Warnings"
+    query: "service:cf-search message:*storage* level:warn"
+    threshold: 3
+    timeframe: "5m"
+    severity: warning
+    message: |
+      Storage limit warnings detected.
+      Monitor storage usage closely.
+
+# SLO Configuration
+slos:
+  - name: "Search Service Availability"
+    metric: cf_search.operations.count
+    good_events: "status:success"
+    total_events: "*"
+    target: 99.9 # 99.9% availability
+    timeframe: "7d"
+
+  - name: "Search Latency SLO"
+    metric: cf_search.search.latency
+    target: 500 # 500ms P95
+    aggregation: p95
+    timeframe: "7d"
+
+  - name: "Index Success Rate"
+    metric: cf_search.operations.count
+    good_events: "operation:index status:success"
+    total_events: "operation:index"
+    target: 99.5 # 99.5% success rate
+    timeframe: "7d"

@@ -1,0 +1,193 @@
+# Example Datadog Configuration for CF Search Service
+# This file demonstrates the monitoring configuration format
+# Copy to datadog-config.yml and customize for your environment
+
+# Standard metric-based alerts
+alerts:
+  # Performance monitoring
+  - name: "CF Search - High Search Latency (P95)"
+    metric: "cf_search.search.latency"
+    aggregation: "p95"
+    threshold: 1000 # 1 second
+    comparison: ">"
+    timeframe: "5m"
+    severity: "warning"
+    message: |
+      🚨 Search latency P95 is above 1 second
+
+      **Impact:** Users experiencing slow search responses
+      **Dashboard:** https://app.datadoghq.com/dashboard/cf-search
+      **Runbook:** https://docs.company.com/runbooks/search-latency
+
+      @team-search @slack-alerts
+
+  - name: "CF Search - Critical Search Latency (P99)"
+    metric: "cf_search.search.latency"
+    aggregation: "p99"
+    threshold: 5000 # 5 seconds
+    comparison: ">"
+    timeframe: "5m"
+    severity: "critical"
+    message: |
+      🚨 CRITICAL: Search latency P99 above 5 seconds
+
+      **Impact:** Severe performance degradation
+      **Action Required:** Immediate investigation
+
+      @pagerduty-critical @team-search-oncall
+
+  # Error rate monitoring (formula-based)
+  - name: "CF Search - High Error Rate"
+    formula: "(cf_search.errors.count.rate / cf_search.operations.count.rate) * 100"
+    threshold: 5 # 5% error rate
+    comparison: ">"
+    timeframe: "10m"
+    severity: "warning"
+    message: |
+      ⚠️ Error rate exceeded 5% over the last 10 minutes
+
+      **Current Rate:** {{value}}%
+      **Threshold:** 5%
+      **Dashboard:** https://app.datadoghq.com/dashboard/cf-search-errors
+
+      @team-search
+
+  - name: "CF Search - Critical Error Rate"
+    formula: "(cf_search.errors.count.rate / cf_search.operations.count.rate) * 100"
+    threshold: 15 # 15% error rate
+    comparison: ">"
+    timeframe: "5m"
+    severity: "critical"
+    message: |
+      🚨 CRITICAL: Error rate above 15%
+
+      **Service Impact:** Likely degraded for users
+      **Action:** Immediate escalation required
+
+      @pagerduty-critical
+
+  # Storage monitoring
+  - name: "CF Search - Storage High Utilization"
+    metric: "cf_search.storage.utilization_percent"
+    aggregation: "avg"
+    threshold: 80 # 80% utilization
+    comparison: ">"
+    timeframe: "5m"
+    severity: "warning"
+    message: |
+      💾 Storage utilization above 80%
+
+      **Current:** {{value}}%
+      **Action:** Monitor purging process
+      **Dashboard:** https://app.datadoghq.com/dashboard/cf-search-storage
+
+  - name: "CF Search - Storage Critical"
+    metric: "cf_search.storage.utilization_percent"
+    aggregation: "avg"
+    threshold: 95 # 95% utilization
+    comparison: ">"
+    timeframe: "1m"
+    severity: "critical"
+    message: |
+      🚨 CRITICAL: Storage utilization above 95%
+
+      **Risk:** Approaching Cloudflare DO limits
+      **Action:** Immediate intervention required
+
+      @pagerduty-critical
+
+  # Service availability
+  - name: "CF Search - Service Down"
+    metric: "cf_search.operations.count"
+    aggregation: "avg"
+    threshold: 1
+    comparison: "<"
+    timeframe: "5m"
+    severity: "critical"
+    message: |
+      🚨 CRITICAL: No operations detected
+
+      **Status:** Service appears completely down
+      **Duration:** Last 5 minutes
+      **Action:** Immediate investigation required
+
+      @pagerduty-critical @team-search-oncall
+
+# Log-based alerts for application-specific events
+log_alerts:
+  - name: "CF Search - Database Schema Errors"
+    query: "service:cf-search level:error message:*schema*"
+    threshold: 1
+    timeframe: "5m"
+    severity: "critical"
+    message: |
+      🚨 Database schema errors detected
+
+      **Impact:** Potential data corruption or migration issues
+      **Action:** Immediate database team involvement
+
+      @database-team @pagerduty-critical
+
+  - name: "CF Search - Authentication Failures"
+    query: "service:cf-search level:error message:*authentication* OR message:*unauthorized*"
+    threshold: 10
+    timeframe: "10m"
+    severity: "warning"
+    message: |
+      🔒 Multiple authentication failures detected
+
+      **Count:** {{value}} failures in 10 minutes
+      **Potential:** Security incident or misconfiguration
+
+      @security-team @team-search
+
+  - name: "CF Search - Validation Errors Spike"
+    query: "service:cf-search error_type:ValidationError"
+    threshold: 10
+    timeframe: "10m"
+    severity: "warning"
+    message: |
+      ⚠️ High number of validation errors
+
+      **Count:** {{value}} validation errors
+      **Possible Causes:**
+      - Data quality issues
+      - API contract changes
+      - Potential injection attempts
+
+      @team-search
+
+  - name: "CF Search - Queue Backup"
+    query: "service:cf-search message:*queue* message:*backlog*"
+    threshold: 1
+    timeframe: "5m"
+    severity: "warning"
+    message: |
+      📬 Queue processing delays detected
+
+      **Impact:** Document indexing delays
+      **Dashboard:** https://app.datadoghq.com/dashboard/cf-search-queues
+
+      @team-search
+
+  # Example of complex monitoring patterns
+  - name: "CF Search - Unusual Traffic Pattern"
+    query: "service:cf-search operation:search"
+    threshold: 1000
+    timeframe: "1m"
+    severity: "info"
+    message: |
+      📈 Unusual search traffic spike
+
+      **Volume:** {{value}} searches per minute
+      **Normal:** <100 per minute
+      **Possible:** Marketing campaign or external traffic
+
+      @team-search (monitoring only)
+
+# Notes for customization:
+# 1. Replace placeholder URLs with your actual dashboard links
+# 2. Update notification channels (@team-search, @pagerduty-critical, etc.)
+# 3. Adjust thresholds based on your baseline performance
+# 4. Add environment-specific variations if needed
+# 5. Include relevant runbook links for each alert
