@@ -1,3 +1,4 @@
+---
 name: 🐞 Bug
 description: File a bug/issue
 title: "[BUG] <title>"
@@ -57,3 +58,9 @@ body:
       Tip: You can attach images or log files by clicking this area to highlight it and then dragging files in.
   validations:
     required: false
+name: Bug
+about: Create a bug issue; a bugfix/ branch will be automatically created
+title: ''
+labels: 'bug'
+assignees: ''
+---
